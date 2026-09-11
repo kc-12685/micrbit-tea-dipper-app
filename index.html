@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Micro:bit Controller Dashboard</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            text-align: center;
+            padding: 50px;
+            color: #333;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #0078d4;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            margin: 10px;
+            transition: 0.2s;
+        }
+        button:hover { background-color: #005a9e; }
+        .disconnect-btn { background-color: #d83b01; }
+        .disconnect-btn:hover { background-color: #a80000; }
+        #status {
+            font-weight: bold;
+            margin: 20px 0;
+            color: #666;
+        }
+        .data-box {
+            background: #eef1f5;
+            padding: 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Micro:bit Web Controller</h1>
+    <p>Interact with your micro:bit using Web Bluetooth.</p>
+    
+    <button id="connectBtn">Connect Micro:bit</button>
+    <button id="disconnectBtn" class="disconnect-btn" style="display:none;">Disconnect</button>
+    
+    <div id="status">Status: Disconnected</div>
+
+    <div id="controls" style="display:none;">
+        <h3>Send Commands</h3>
+        <button id="ledOnBtn">Show Heart ❤️</button>
+        <button id="ledOffBtn">Clear Screen ⬛</button>
+        
+        <h3>Data Received</h3>
+        <div class="data-box" id="receivedData">Waiting for data...</div>
+    </div>
+</div>
+
+<script>
+    // Micro:bit Bluetooth UART Service UUIDs
+    const UART_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const TX_CHARACTERISTIC_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"; // Transmit (Micro:bit -> Web)
+    const RX_CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"; // Receive (Web -> Micro:bit)
+
+    let bluetoothDevice = null;
+    let rxCharacteristic = null;
+
+    const connectBtn = document.getElementById('connectBtn');
+    const disconnectBtn = document.getElementById('disconnectBtn');
+    const statusDiv = document.getElementById('status');
+    const controlsDiv = document.getElementById('controls');
+    const receivedDataDiv = document.getElementById('receivedData');
+
+    // Connect to Micro:bit
+    connectBtn.addEventListener('click', async () => {
+        try {
+            statusDiv.innerText = "Status: Searching for micro:bit...";
+            
+            // Request the micro:bit device via Bluetooth
+            bluetoothDevice = await navigator.bluetooth.requestDevice({
+                filters: [{ namePrefix: 'BBC micro:bit' }],
+                optionalServices: [UART_SERVICE_UUID]
+            });
+
+            statusDiv.innerText = "Status: Connecting to GATT Server...";
+            const server = await bluetoothDevice.gatt.connect();
+
+            statusDiv.innerText = "Status: Fetching UART Service...";
+            const service = await server.getPrimaryService(UART_SERVICE_UUID);
+
+            // Get characteristics for reading and writing
+            rxCharacteristic = await service.getCharacteristic(RX_CHARACTERISTIC_UUID);
+            const txCharacteristic = await service.getCharacteristic(TX_CHARACTERISTIC_UUID);
+
+            // Start listening for incoming data from the micro:bit
+            await txCharacteristic.startNotifications();
+            txCharacteristic.addEventListener('characteristicvaluechanged', handleIncomingData);
+
+            // Update UI
+            statusDiv.innerText = "Status: Connected! 🎉";
+            statusDiv.style.color = "#107c41";
+            connectBtn.style.display = 'none';
+            disconnectBtn.style.display = 'inline-block';
+            controlsDiv.style.display = 'block';
+
+            // Listen for accidental disconnects
+            bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+        } catch (error) {
+            console.error(error);
+            statusDiv.innerText = `Status: Error - ${error.message}`;
+            statusDiv.style.color = "#d83b01";
+        }
+    });
+
+    // Handle incoming data from micro:bit
+    function handleIncomingData(event) {
+        let textDecoder = new TextDecoder();
+        let stringData = textDecoder.decode(event.target.value);
+        receivedDataDiv.innerText = stringData;
+    }
+
+    // Send data to Micro:bit
+    async function sendCommand(command) {
+        if (!rxCharacteristic) return;
+        let textEncoder = new TextEncoder();
+        // Add a newline character so micro:bit knows the command ended
+        await rxCharacteristic.writeValue(textEncoder.encode(command + "\n"));
+    }
+
+    // Button Actions
+    document.getElementById('ledOnBtn').addEventListener('click', () => sendCommand('HEART'));
+    document.getElementById('ledOffBtn').addEventListener('click', () => sendCommand('CLEAR'));
+
+    // Disconnect functionality
+    disconnectBtn.addEventListener('click', () => {
+        if (bluetoothDevice && bluetoothDevice.gatt.connected) {
+            bluetoothDevice.gatt.disconnect();
+        }
+    });
+
+    function onDisconnected() {
+        statusDiv.innerText = "Status: Disconnected";
+        statusDiv.style.color = "#666";
+        connectBtn.style.display = 'inline-block';
+        disconnectBtn.style.display = 'none';
+        controlsDiv.style.display = 'none';
+    }
+</script>
+</body>
+</html>
